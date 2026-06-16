@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сканер ТСД</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1c1c1e;
+            color: white;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        #reader {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .status {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #aaaaaa;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Сканирование товара</h2>
+    <div id="reader"></div>
+    <div class="status" id="status">Наведите камеру на штрих-код</div>
+
+    <script>
+        // Инициализируем Telegram WebApp
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Разворачиваем окно на весь экран
+
+        function onScanSuccess(decodedText, decodedResult) {
+            // Вызываем тактильную отдачу (вибрацию) телефона, если поддерживается
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.notificationOccurred('success');
+            }
+            
+            document.getElementById('status').innerText = "Успешно: " + decodedText;
+
+            # Полученный штрих-код отправляем обратно в бота в виде JSON строки
+            const data = JSON.stringify({ barcode: decodedText });
+            tg.sendData(data); 
+            
+            # Закрываем WebApp автоматически
+            tg.close();
+        }
+
+        function onScanFailure(error) {
+            // Ошибки поиска в кадре игнорируем, чтобы не спамить в консоль
+        }
+
+        // Настройки сканера
+        let html5QrcodeScanner = new Html5Qrcode("reader");
+        
+        // formatsToSupport: указываем, какие типы кодов нам нужны (без PDF417!)
+        const config = { 
+            fps: 10, 
+            qrbox: { width: 250, height: 150 },
+            formatsToSupport: [ 
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.QR_CODE
+            ]
+        };
+
+        // Запуск камеры (по умолчанию берем заднюю камеру: facingMode: "environment")
+        html5QrcodeScanner.start(
+            { facingMode: "environment" }, 
+            config, 
+            onScanSuccess, 
+            onScanFailure
+        ).catch(err => {
+            document.getElementById('status').innerText = "Ошибка камеры: " + err;
+        });
+    </script>
+</body>
+</html>
