@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Сканер ТСД</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
@@ -13,95 +13,157 @@
             color: white;
             text-align: center;
             margin: 0;
-            padding: 20px;
+            padding: 0;
             display: flex;
             flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            min-height: 80vh;
+            justify-content: space-between; /* Элементы по краям экрана */
+            height: 100vh; /* На весь экран */
+            overflow: hidden;
         }
+
+        /* Заголовок сверху */
         h2 {
-            margin-bottom: 20px;
-            font-size: 24px;
+            margin-top: 20px;
+            font-size: 20px;
             font-weight: 600;
         }
-        #reader {
+
+        /* Область сканера по центру */
+        #reader-container {
+            flex-grow: 1; /* Занимает всё свободное место */
+            display: flex;
+            justify-content: center;
+            align-items: center;
             width: 100%;
-            max-width: 360px;
+        }
+
+        #reader {
+            width: 90%;
+            max-width: 400px;
+            aspect-ratio: 1 / 1; /* Квадратная область */
             border-radius: 16px;
             overflow: hidden;
             background-color: #000000;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            display: none; /* Скрыто до нажатия кнопки */
         }
+
+        /* Нижняя панель со статусом и кнопкой */
+        .bottom-panel {
+            background-color: #2c2c2e;
+            padding: 20px;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
         .status {
-            margin-top: 25px;
-            font-size: 16px;
+            font-size: 15px;
             color: #9a9a9f;
-            max-width: 300px;
+            margin-bottom: 15px;
             line-height: 1.4;
+        }
+
+        /* Большая синяя кнопка для явного запроса камеры на iOS */
+        #start-camera-btn {
+            background-color: #007aff; /* Синий цвет как в iOS */
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 15px 30px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            max-width: 300px;
+            -webkit-tap-highlight-color: transparent; /* Убираем блик при клике */
+        }
+
+        #start-camera-btn:active {
+            background-color: #0056b3;
         }
     </style>
 </head>
 <body>
 
-    <h2>Сканирование товара</h2>
-    <div id="reader"></div>
-    <div class="status" id="status">Запрашиваю доступ к камере...</div>
+    <h2>Сканер товара</h2>
+
+    <div id="reader-container">
+        <div id="reader"></div>
+    </div>
+
+    <div class="bottom-panel">
+        <div class="status" id="status">
+            Для начала работы необходимо<br>включить камеру
+        </div>
+        <button id="start-camera-btn">Включить камеру 📷</button>
+    </div>
 
     <script>
-        // Инициализируем Telegram WebApp API
+        // Инициализируем API
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Разворачиваем окно на весь экран телефона
+        tg.expand(); // Разворачиваем окно
 
-        // Проверяем версию и запрашиваем доступ к камере у Telegram (для iOS/Android)
-        if (tg.version && parseFloat(tg.version) >= 6.4) {
-            tg.requestCameraAccess({
-                callback: function (allowed) {
-                    if (allowed) {
-                        document.getElementById('status').innerText = "Доступ получен. Включаю камеру...";
-                        startScanner();
-                    } else {
-                        document.getElementById('status').innerHTML = "❌ Доступа к камере нет.<br><br>Пожалуйста, перейдите в <b>Настройки телефона -> Telegram -> Камера</b> и разрешите доступ.";
+        const startButton = document.getElementById('start-camera-btn');
+        const readerElement = document.getElementById('reader');
+        const statusElement = document.getElementById('status');
+        let html5QrcodeScanner = null;
+
+        // Обработка клика по кнопке (явное действие пользователя для iOS)
+        startButton.addEventListener('click', function() {
+            statusElement.innerText = "Запрашиваю доступ у системы...";
+            startButton.style.display = 'none'; // Скрываем кнопку
+
+            // Сначала пробуем запросить камеру через Telegram API
+            if (tg.requestCameraAccess) {
+                tg.requestCameraAccess({
+                    callback: function (allowed) {
+                        if (allowed) {
+                            prepareScanner();
+                        } else {
+                            handleCameraError("❌ Доступ к камере отклонен.<br><br>Пожалуйста, разрешите доступ в настройках iOS: <b>Настройки -> Telegram -> Камера</b>.");
+                        }
                     }
-                }
-            });
-        } else {
-            // Страховка для старых версий Telegram — пробуем запустить камеру напрямую через браузер
-            document.getElementById('status').innerText = "Старая версия Telegram. Пробую прямой запуск...";
-            startScanner();
+                });
+            } else {
+                // Если API Telegram недоступно (старая версия), пробуем прямой запуск
+                prepareScanner();
+            }
+        });
+
+        // Функция подготовки элементов и запуска камеры
+        function prepareScanner() {
+            statusElement.innerText = "Система разрешила. Включаю камеру...";
+            readerElement.style.display = 'block'; // Показываем квадрат для видео
+            startCamera();
         }
 
-        // Функция запуска сканера
-        function startScanner() {
-            function onScanSuccess(decodedText, decodedResult) {
-                // Вибрируем (тактильный отклик на iOS/Android), если поддерживается
+        function startCamera() {
+            function onScanSuccess(decodedText) {
+                // Haptic feedback (iOS/Android)
                 if (tg.HapticFeedback) {
                     tg.HapticFeedback.notificationOccurred('success');
                 }
                 
-                document.getElementById('status').innerText = "Код считан: " + decodedText;
+                statusElement.innerText = "✅ Код считан. Закрываю...";
 
-                // Упаковываем код в JSON и отправляем обратно в Python-бот
-                const dataToSend = JSON.stringify({ barcode: decodedText });
-                tg.sendData(dataToSend); 
+                // Отправляем данные в Python
+                tg.sendData(JSON.stringify({ barcode: decodedText })); 
                 
-                // Закрываем мини-приложение
-                setTimeout(() => {
-                    tg.close();
-                }, 100);
+                // Закрываем WebApp
+                setTimeout(() => tg.close(), 200);
             }
 
             function onScanFailure(error) {
-                // Ошибки поиска кода внутри кадра просто пропускаем, чтобы не засорять память
+                // Пропускаем ошибки поиска
             }
 
-            // Создаем объект сканера
-            let html5QrcodeScanner = new Html5Qrcode("reader");
+            html5QrcodeScanner = new Html5Qrcode("reader");
             
-            // Конфигурация: частота кадров, размер прицела и типы кодов
             const config = { 
-                fps: 10, 
-                qrbox: { width: 260, height: 160 },
+                fps: 15, 
+                qrbox: { width: 280, height: 180 }, // Размер прицела
                 formatsToSupport: [ 
                     Html5QrcodeSupportedFormats.EAN_13,
                     Html5QrcodeSupportedFormats.EAN_8,
@@ -110,18 +172,26 @@
                 ]
             };
 
-            // Запускаем основную (заднюю) камеру смартфона
+            // Запускаем камеру
             html5QrcodeScanner.start(
-                { facingMode: "environment" }, 
+                { facingMode: "environment" }, // Использовать заднюю камеру
                 config, 
                 onScanSuccess, 
                 onScanFailure
             ).then(() => {
-                document.getElementById('status').innerText = "Наведите камеру на штрих-код товара";
+                statusElement.innerText = "Наведите прицел на штрих-код товара";
             }).catch(err => {
-                document.getElementById('status').innerHTML = "Ошибки запуска камеры.<br>Убедитесь, что Telegram разрешен доступ к камере в настройках iOS/Android.";
+                handleCameraError("Ошибки запуска камеры.<br>Убедитесь, что камера не используется другим приложением и доступ разрешен в настройках iOS.");
                 console.error(err);
             });
+        }
+
+        // Вспомогательная функция для обработки ошибок
+        function handleCameraError(message) {
+            statusElement.innerHTML = message;
+            readerElement.style.display = 'none';
+            startButton.style.display = 'inline-block'; // Возвращаем кнопку, чтобы пользователь мог попробовать снова
+            startButton.innerText = "Попробовать снова 📷";
         }
     </script>
 </body>
