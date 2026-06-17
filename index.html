@@ -19,7 +19,11 @@
             height: 100vh;
             overflow: hidden;
         }
-        h2 { margin-top: 15px; font-size: 18px; }
+        h2 { 
+            margin-top: 20px; 
+            font-size: 20px;
+            font-weight: 600;
+        }
         #reader-container {
             flex-grow: 1;
             display: flex;
@@ -34,60 +38,133 @@
             border-radius: 16px;
             overflow: hidden;
             background-color: #000;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
         }
-        .panel { padding: 15px; background: #2c2c2e; }
+        /* Стилизация внутренних элементов библиотеки html5-qrcode */
+        #reader video {
+            object-fit: cover !important;
+        }
+        #reader__scan_region {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .panel { 
+            padding: 20px; 
+            background: #2c2c2e; 
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.3);
+        }
         .btn {
-            background-color: #007aff; color: white; border: none;
-            border-radius: 12px; padding: 15px; font-size: 16px;
-            font-weight: 600; width: 100%; max-width: 300px;
+            background-color: #007aff; 
+            color: white; 
+            border: none;
+            border-radius: 12px; 
+            padding: 16px; 
+            font-size: 16px;
+            font-weight: 600; 
+            width: 100%; 
+            max-width: 300px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,122,255,0.3);
+            transition: background-color 0.2s;
+        }
+        .btn:active {
+            background-color: #0056b3;
+        }
+        .status {
+            margin-bottom: 12px; 
+            color: #9a9a9f; 
+            font-size: 15px;
         }
     </style>
 </head>
 <body>
+
     <h2>Сканирование товара</h2>
-    <div id="reader-container"><div id="reader"></div></div>
+    
+    <div id="reader-container">
+        <div id="reader"></div>
+    </div>
+    
     <div class="panel">
-        <div id="status" style="margin-bottom: 10px; color: #9a9a9f;">Нажмите для старта</div>
+        <div id="status" class="status">Нажмите кнопку для запуска</div>
         <button class="btn" id="action-btn">Включить камеру 📷</button>
     </div>
 
     <script>
         const tg = window.Telegram.WebApp;
-        tg.expand();
+        tg.expand(); // Разворачиваем WebApp на весь экран телефона
 
         const btn = document.getElementById('action-btn');
-        const status = document.getElementById('status');
+        const statusDiv = document.getElementById('status');
         let scanner = null;
 
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             btn.style.display = 'none';
-            status.innerText = "Запуск камеры...";
+            statusDiv.innerText = "Запуск камеры...";
             
+            // Если остался старый экземпляр сканера, очищаем его во избежание конфликтов потока
+            if (scanner) {
+                try {
+                    await scanner.clear();
+                } catch (e) {
+                    console.log("Предыдущий сканер уже был очищен");
+                }
+            }
+            
+            // Инициализируем сканер в блоке <div id="reader">
             scanner = new Html5Qrcode("reader");
             
-            // КРИТИЧЕСКИЕ НАСТРОЙКИ СКОРОСТИ:
+            // Конфигурация для быстрого захвата линейных штрихкодов товаров (EAN-13, и т.д.)
             const config = { 
-                fps: 25, // Повышаем частоту кадров (было 15)
-                qrbox: { width: 300, height: 150 }, // Прямоугольный прицел специально под длинные штрихкоды
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true } // Включает аппаратное ускорение смартфона
+                fps: 25, // Повышенная частота кадров для мгновенной обработки картинки
+                qrbox: { width: 320, height: 160 }, // Прямоугольная рамка прицела под формат товарных штрихкодов
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true } // Аппаратное ускорение на поддерживаемых смартфонах
             };
 
             scanner.start(
-                { facingMode: "environment" },
+                { facingMode: "environment" }, // Принудительно задействуем заднюю камеру
                 config,
                 (text) => {
-                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-                    status.innerText = "Код считан!";
+                    // Коллбек: штрихкод успешно распознан!
+                    
+                    // Виброотклик смартфона (если поддерживается устройством)
+                    if (tg.HapticFeedback) {
+                        tg.HapticFeedback.notificationOccurred('success');
+                    }
+                    
+                    statusDiv.innerText = "Код успешно считан!";
+                    
+                    // Отправляем JSON-пакет обратно в Telegram-бота
                     tg.sendData(JSON.stringify({ barcode: text }));
-                    setTimeout(() => tg.close(), 100);
+                    
+                    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Гасим камеру и освобождаем видеопоток, 
+                    // только после этого закрываем окно WebApp, чтобы избежать "зависаний" при повторном запуске.
+                    scanner.stop().then(() => {
+                        tg.close();
+                    }).catch((err) => {
+                        console.error("Ошибка при остановке камеры:", err);
+                        tg.close();
+                    });
                 },
-                (err) => {} // Игнорируем промахи фокуса
+                (err) => {
+                    // Игнорируем фоновые ошибки фокуса и пустые кадры, чтобы не засорять логи
+                }
             ).then(() => {
-                status.innerText = "Положите штрих-код в рамку прицела";
+                statusDiv.innerText = "Поместите штрих-код в рамку прицела";
             }).catch(e => {
-                status.innerText = "Ошибка камеры. Проверьте разрешения.";
+                statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
                 btn.style.display = 'inline-block';
+                console.error("Ошибка старта html5-qrcode:", e);
             });
+        });
+
+        // Автоматический клик по кнопке при открытии страницы, 
+        // чтобы сотруднику на ТСД не нужно было делать лишнее нажатие на экран
+        document.addEventListener("DOMContentLoaded", () => {
+            setTimeout(() => {
+                btn.click();
+            }, 100);
         });
     </script>
 </body>
