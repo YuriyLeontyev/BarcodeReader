@@ -76,6 +76,54 @@
             color: #9a9a9f; 
             font-size: 15px;
         }
+        .btn-row {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            width: 100%;
+            max-width: 300px;
+            margin: 0 auto;
+        }
+        .btn-secondary {
+            background-color: #3a3a3c;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            flex: 1;
+            cursor: pointer;
+        }
+        .btn-secondary.active {
+            background-color: #ffb300;
+            color: #1c1c1e;
+        }
+        #manual-entry {
+            display: none;
+            margin-top: 12px;
+            gap: 8px;
+        }
+        #manual-entry.visible {
+            display: flex;
+        }
+        #manual-input {
+            flex: 1;
+            border-radius: 10px;
+            border: none;
+            padding: 12px;
+            font-size: 16px;
+            background: #1c1c1e;
+            color: white;
+        }
+        #manual-send {
+            background-color: #007aff;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 0 16px;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -89,6 +137,16 @@
     <div class="panel">
         <div id="status" class="status">Нажмите кнопку для запуска</div>
         <button class="btn" id="action-btn">Включить камеру 📷</button>
+
+        <div class="btn-row" id="extra-controls" style="display:none; margin-top:10px;">
+            <button class="btn-secondary" id="torch-btn" style="display:none;">🔦 Фонарь</button>
+            <button class="btn-secondary" id="manual-toggle-btn">⌨️ Ввести код вручную</button>
+        </div>
+
+        <div id="manual-entry">
+            <input type="text" id="manual-input" inputmode="numeric" placeholder="Штрихкод цифрами">
+            <button id="manual-send">ОК</button>
+        </div>
     </div>
 
     <script>
@@ -97,7 +155,83 @@
 
         const btn = document.getElementById('action-btn');
         const statusDiv = document.getElementById('status');
+        const extraControls = document.getElementById('extra-controls');
+        const torchBtn = document.getElementById('torch-btn');
+        const manualToggleBtn = document.getElementById('manual-toggle-btn');
+        const manualEntry = document.getElementById('manual-entry');
+        const manualInput = document.getElementById('manual-input');
+        const manualSend = document.getElementById('manual-send');
+
         let scanner = null;
+        let torchFeature = null;
+        let torchOn = false;
+        let closing = false; // защита от повторной отправки/закрытия
+
+        // Единая функция: отправляем штрихкод боту и аккуратно закрываем WebApp.
+        // Используется и для камеры, и для ручного ввода, чтобы поведение не расходилось.
+        function sendBarcodeAndClose(text) {
+            if (closing) return;
+            closing = true;
+
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.notificationOccurred('success');
+            }
+            statusDiv.innerText = "Код успешно считан!";
+            tg.sendData(JSON.stringify({ barcode: text }));
+
+            if (scanner) {
+                scanner.stop().then(() => tg.close()).catch(() => tg.close());
+            } else {
+                tg.close();
+            }
+        }
+
+        // Переключение фонарика. Доступно только если поддерживается устройством/браузером
+        // (на Android почти всегда работает, на iPhone веб-страницы пока не могут управлять вспышкой —
+        // это ограничение iOS, не библиотеки).
+        async function setupTorchButton() {
+            try {
+                const capabilities = scanner.getRunningTrackCameraCapabilities();
+                torchFeature = capabilities.torchFeature();
+                if (torchFeature && torchFeature.isSupported()) {
+                    torchBtn.style.display = 'inline-block';
+                } else {
+                    torchBtn.style.display = 'none';
+                }
+            } catch (e) {
+                torchFeature = null;
+                torchBtn.style.display = 'none';
+            }
+        }
+
+        torchBtn.addEventListener('click', async () => {
+            if (!torchFeature) return;
+            try {
+                await torchFeature.apply(!torchOn);
+                torchOn = !torchOn;
+                torchBtn.classList.toggle('active', torchOn);
+                torchBtn.innerText = torchOn ? '🔦 Выключить' : '🔦 Фонарь';
+            } catch (e) {
+                console.error("Не удалось переключить фонарь:", e);
+            }
+        });
+
+        manualToggleBtn.addEventListener('click', () => {
+            manualEntry.classList.toggle('visible');
+            if (manualEntry.classList.contains('visible')) {
+                manualInput.focus();
+            }
+        });
+
+        manualSend.addEventListener('click', () => {
+            const value = manualInput.value.trim();
+            if (!value) return;
+            sendBarcodeAndClose(value);
+        });
+
+        manualInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') manualSend.click();
+        });
 
         btn.addEventListener('click', async () => {
             btn.style.display = 'none';
@@ -112,14 +246,35 @@
                 }
             }
             
-            // Инициализируем сканер в блоке <div id="reader">
-            scanner = new Html5Qrcode("reader");
+            // Инициализируем сканер в блоке <div id="reader">.
+            // formatsToSupport ограничивает декодер только реальными форматами товарных
+            // штрихкодов — меньше работы на кадр, быстрее и надёжнее на слабых телефонах.
+            scanner = new Html5Qrcode("reader", {
+                formatsToSupport: [
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.UPC_A,
+                    Html5QrcodeSupportedFormats.UPC_E,
+                    Html5QrcodeSupportedFormats.UPC_EAN_EXTENSION,
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.CODE_39,
+                    Html5QrcodeSupportedFormats.CODABAR,
+                    Html5QrcodeSupportedFormats.ITF
+                ],
+                verbose: false
+            });
             
-            // Конфигурация для быстрого захвата линейных штрихкодов товаров (EAN-13, и т.д.)
+            // Конфигурация для захвата линейных штрихкодов товаров (EAN-13, и т.д.)
             const config = { 
-                fps: 25, // Повышенная частота кадров для мгновенной обработки картинки
+                fps: 12, // Снижено с 25: при высоком fps камера укорачивает выдержку, картинка темнее.
+                          // 12 кадров/сек достаточно для статичного сканирования и оставляет камере
+                          // больше времени на экспозицию в слабом свете.
                 qrbox: { width: 320, height: 160 }, // Прямоугольная рамка прицела под формат товарных штрихкодов
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true } // Аппаратное ускорение на поддерживаемых смартфонах
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true }, // Аппаратное ускорение на поддерживаемых смартфонах
+                videoConstraints: {
+                    facingMode: "environment",
+                    advanced: [{ focusMode: "continuous" }] // Просим непрерывную автофокусировку, где это поддерживается
+                }
             };
 
             scanner.start(
@@ -127,34 +282,20 @@
                 config,
                 (text) => {
                     // Коллбек: штрихкод успешно распознан!
-                    
-                    // Виброотклик смартфона (если поддерживается устройством)
-                    if (tg.HapticFeedback) {
-                        tg.HapticFeedback.notificationOccurred('success');
-                    }
-                    
-                    statusDiv.innerText = "Код успешно считан!";
-                    
-                    // Отправляем JSON-пакет обратно в Telegram-бота
-                    tg.sendData(JSON.stringify({ barcode: text }));
-                    
-                    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Гасим камеру и освобождаем видеопоток, 
-                    // только после этого закрываем окно WebApp, чтобы избежать "зависаний" при повторном запуске.
-                    scanner.stop().then(() => {
-                        tg.close();
-                    }).catch((err) => {
-                        console.error("Ошибка при остановке камеры:", err);
-                        tg.close();
-                    });
+                    sendBarcodeAndClose(text);
                 },
                 (err) => {
                     // Игнорируем фоновые ошибки фокуса и пустые кадры, чтобы не засорять логи
                 }
             ).then(() => {
                 statusDiv.innerText = "Поместите штрих-код в рамку прицела";
+                extraControls.style.display = 'flex';
+                setupTorchButton();
             }).catch(e => {
                 statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
                 btn.style.display = 'inline-block';
+                extraControls.style.display = 'flex';
+                torchBtn.style.display = 'none';
                 console.error("Ошибка старта html5-qrcode:", e);
             });
         });
