@@ -40,7 +40,6 @@
             background-color: #000;
             box-shadow: 0 8px 24px rgba(0,0,0,0.5);
         }
-        /* Стилизация внутренних элементов библиотеки html5-qrcode */
         #reader video {
             object-fit: cover !important;
         }
@@ -66,10 +65,6 @@
             max-width: 300px;
             cursor: pointer;
             box-shadow: 0 4px 12px rgba(0,122,255,0.3);
-            transition: background-color 0.2s;
-        }
-        .btn:active {
-            background-color: #0056b3;
         }
         .status {
             margin-bottom: 12px;
@@ -151,7 +146,7 @@
 
     <script>
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Разворачиваем WebApp на весь экран телефона
+        tg.expand();
 
         const btn = document.getElementById('action-btn');
         const statusDiv = document.getElementById('status');
@@ -165,9 +160,8 @@
         let scanner = null;
         let torchFeature = null;
         let torchOn = false;
-        let closing = false; // защита от повторной отправки/закрытия
+        let closing = false;
 
-        // Единая функция: отправляем штрихкод боту и аккуратно закрываем WebApp
         function sendBarcodeAndClose(text) {
             if (closing) return;
             closing = true;
@@ -184,7 +178,6 @@
             }
         }
 
-        // Переключение фонарика
         async function setupTorchButton() {
             try {
                 const capabilities = scanner.getRunningTrackCameraCapabilities();
@@ -231,14 +224,10 @@
 
         btn.addEventListener('click', async () => {
             btn.style.display = 'none';
-            statusDiv.innerText = "Настройка оптики...";
+            statusDiv.innerText = "Запуск камеры...";
             
             if (scanner) {
-                try {
-                    await scanner.clear();
-                } catch (e) {
-                    console.log("Предыдущий сканер уже был очищен");
-                }
+                try { await scanner.clear(); } catch (e) {}
             }
          
             scanner = new Html5Qrcode("reader", {
@@ -247,90 +236,68 @@
                     Html5QrcodeSupportedFormats.EAN_8,
                     Html5QrcodeSupportedFormats.UPC_A,
                     Html5QrcodeSupportedFormats.UPC_E,
-                    Html5QrcodeSupportedFormats.UPC_EAN_EXTENSION,
                     Html5QrcodeSupportedFormats.CODE_128,
                     Html5QrcodeSupportedFormats.CODE_39,
-                    Html5QrcodeSupportedFormats.CODABAR,
                     Html5QrcodeSupportedFormats.ITF
                 ],
                 verbose: false
             });
 
-            // Настройки движка распознавания
+            // Конфигурация сканирования: оптимальный FPS для экспозиции кадра
             const config = { 
-                fps: 15, // Оптимальный FPS для выдержки при слабом освещении
-                qrbox: { width: 320, height: 160 }, 
+                fps: 15, 
+                qrbox: { width: 310, height: 150 }, 
                 experimentalFeatures: { useBarCodeDetectorIfSupported: true }
             };
 
-            // ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Используем свойства напрямую, убирая жесткие рамки min/max,
-            // которые вешают Safari. Задаем 'ideal' — это заставит iPhone выдать HD-качество,
-            // но если система занята, она плавно снизит его без вылета.
-            const flexibleCameraConstraints = {
-                facingMode: "environment",
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                advanced: [
-                    { focusMode: "continuous" },
-                    { zoom: 1.5 } // Мягкий зум для макросъемки штрихкодов
-                ]
-            };
-
-            // Полная обертка в таймаут безопасности на случай, если Safari "замолчит"
-            let nativeFallbackTriggered = false;
-            const fallbackTimeout = setTimeout(() => {
-                if (!nativeFallbackTriggered) {
-                    nativeFallbackTriggered = true;
-                    console.warn("Основной запуск завис. Принудительный переход на базовый режим...");
-                    startFallback();
-                }
-            }, 2500); // Если за 2.5 секунды камера не ответила, переключаем режим
-
-            function startFallback() {
-                scanner.start(
-                    { facingMode: "environment" },
-                    config,
-                    (text) => { sendBarcodeAndClose(text); },
-                    (err) => { }
-                ).then(() => {
-                    statusDiv.innerText = "Поместите штрих-код в рамку прицела (базовый режим)";
-                    extraControls.style.display = 'flex';
-                    setupTorchButton();
-                }).catch(err2 => {
-                    statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
-                    btn.style.display = 'inline-block';
-                    extraControls.style.display = 'flex';
-                    torchBtn.style.display = 'none';
-                });
-            }
-
+            // 1. ЗАПУСК КАМЕРЫ: Используем максимально простой и бесконфликтный режим.
+            // Это гарантирует, что iPhone мгновенно откроет видеопоток БЕЗ зависаний.
             scanner.start(
-                flexibleCameraConstraints,
+                { facingMode: "environment" },
                 config,
-                (text) => {
-                    clearTimeout(fallbackTimeout);
-                    sendBarcodeAndClose(text);
-                },
+                (text) => { sendBarcodeAndClose(text); },
                 (err) => { }
-            ).then(() => {
-                clearTimeout(fallbackTimeout);
+            ).then(async () => {
                 statusDiv.innerText = "Поместите штрих-код в рамку прицела";
                 extraControls.style.display = 'flex';
                 setupTorchButton();
-            }).catch(e => {
-                clearTimeout(fallbackTimeout);
-                if (!nativeFallbackTriggered) {
-                    nativeFallbackTriggered = true;
-                    console.warn("HD режим отклонен. Запуск базового потока...", e);
-                    startFallback();
+
+                // 2. ДИНАМИЧЕСКИЙ ТЮНИНГ ОПТИКИ ПОД IPHONE (HD-поток + Зум + Автофокус)
+                // Камера уже запущена, теперь мы аккуратно применяем параметры к активному треку.
+                try {
+                    const track = scanner.getRunningTrack();
+                    if (track) {
+                        const constraints = {
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                            advanced: [
+                                { focusMode: "continuous" }, // Постоянный фокус
+                                { zoom: 1.5 }               // Зум 1.5х для исключения размытия вблизи
+                            ]
+                        };
+                        
+                        // Применяем настройки потока «на лету»
+                        if (typeof track.applyConstraints === 'function') {
+                            await track.applyConstraints(constraints);
+                            console.log("HD-разрешение и Zoom 1.5 успешно применены к треку iPhone!");
+                        }
+                    }
+                } catch (trackErr) {
+                    // Если конкретная старая модель iOS не поддерживает зум на лету, она просто пропустит этот шаг
+                    console.warn("Не удалось динамически настроить трек оптики:", trackErr);
                 }
+
+            }).catch(err => {
+                statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
+                btn.style.display = 'inline-block';
+                extraControls.style.display = 'flex';
+                torchBtn.style.display = 'none';
+                console.error("Критическая ошибка старта:", err);
             });
         });
 
         document.addEventListener("DOMContentLoaded", () => {
-            setTimeout(() => {
-                btn.click();
-            }, 100);
+            setTimeout(() => { btn.click(); }, 150);
         });
     </script>
 </body>
