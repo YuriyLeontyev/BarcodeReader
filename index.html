@@ -100,17 +100,47 @@
         let lastScannedCode = "";
         let lastScannedTime = 0;
 
+        // Единый коллбек успешного сканирования товара
+        const onScanSuccess = (text) => {
+            const now = Date.now();
+            // Защита от случайного повторного считывания одной и той же коробки за 1.5 секунды
+            if (text === lastScannedCode && (now - lastScannedTime) < 1500) {
+                return; 
+            }
+            
+            lastScannedCode = text;
+            lastScannedTime = now;
+
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.notificationOccurred('success');
+            }
+            
+            scannedBarcodes.push(text);
+            countSpan.innerText = scannedBarcodes.length;
+            statusDiv.innerText = `Добавлен код: ${text}`;
+            
+            const p = document.createElement('div');
+            p.innerText = `✓ ${text}`;
+            logDiv.appendChild(p);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        };
+
         startBtn.addEventListener('click', async () => {
             startBtn.style.display = 'none';
             controls.style.display = 'block';
             statusDiv.innerText = "Инициализация оптики...";
             
+            // Если остался старый экземпляр сканера, очищаем его
+            if (scanner) {
+                try { await scanner.clear(); } catch (e) {}
+            }
+            
             scanner = new Html5Qrcode("reader");
             
             const config = { 
-                fps: 30, // Максимальная частота для быстрого захвата
+                fps: 30, 
                 qrbox: { width: 320, height: 160 },
-                // Отключаем поиск QR-кодов, ищем только товарные штрихкоды (быстрее распознает при плохом свете)
+                // Отключаем поиск QR-кодов, ищем только товарные линейные коды для экономии процессора
                 formatsToSupport: [ 
                     Html5QrcodeSupportedFormats.EAN_13,
                     Html5QrcodeSupportedFormats.EAN_8,
@@ -119,50 +149,42 @@
                 experimentalFeatures: { useBarCodeDetectorIfSupported: true }
             };
 
-            // Запрашиваем высокое разрешение, чтобы мелкие полосы кода были четкими
-            const cameraConfig = {
+            // Попытка 1: Запрос улучшенного адаптивного разрешения с автофокусом
+            const adaptiveCameraConfig = {
                 facingMode: "environment",
-                width: { ideal: 1920 },
-                height: { ideal: 1080 }
+                width: { min: 640, ideal: 1280, max: 1920 },
+                height: { min: 480, ideal: 720, max: 1080 },
+                focusMode: "continuous"
             };
 
             scanner.start(
-                cameraConfig,
+                adaptiveCameraConfig,
                 config,
-                (text) => {
-                    const now = Date.now();
-                    // Защита от случайного повторного считывания одной и той же коробки за 1.5 секунды
-                    if (text === lastScannedCode && (now - lastScannedTime) < 1500) {
-                        return; 
-                    }
-                    
-                    lastScannedCode = text;
-                    lastScannedTime = now;
-
-                    if (tg.HapticFeedback) {
-                        tg.HapticFeedback.notificationOccurred('success');
-                    }
-                    
-                    scannedBarcodes.push(text);
-                    countSpan.innerText = scannedBarcodes.length;
-                    statusDiv.innerText = `Добавлен код: ${text}`;
-                    
-                    const p = document.createElement('div');
-                    p.innerText = `✓ ${text}`;
-                    logDiv.appendChild(p);
-                    logDiv.scrollTop = logDiv.scrollHeight;
-                },
+                onScanSuccess,
                 (err) => { }
             ).then(() => {
                 statusDiv.innerText = "Наводите прицел на штрихкод товара";
             }).catch(e => {
-                statusDiv.innerText = "Ошибка камеры. Проверьте разрешения.";
-                startBtn.style.display = 'inline-block';
-                controls.style.display = 'none';
+                console.error("Попытка с расширенными настройками не удалась. Запуск резервного режима...", e);
+                
+                // Попытка 2 (Фолбек): Если браузер Telegram отклонил сложные настройки, запускаем базовый режим
+                scanner.start(
+                    { facingMode: "environment" },
+                    config,
+                    onScanSuccess,
+                    (err) => {}
+                ).then(() => {
+                    statusDiv.innerText = "Наводите прицел (резервный режим)";
+                }).catch(err2 => {
+                    statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры в настройках Telegram.";
+                    startBtn.style.display = 'inline-block';
+                    controls.style.display = 'none';
+                    console.error("Критическая ошибка старта камеры:", err2);
+                });
             });
         });
 
-        // Управление вспышкой (Фонариком) через свойства видеотрека
+        // Управление вспышкой (Фонариком) через свойства запущенного медиапотока
         torchBtn.addEventListener('click', async () => {
             if (!scanner) return;
             try {
@@ -177,14 +199,17 @@
                         torchBtn.innerText = isTorchOn ? "Фонарик: ВКЛ ☀️" : "Фонарик: ВЫКЛ 🔦";
                         torchBtn.style.backgroundColor = isTorchOn ? "#34c759" : "#ff9500";
                     } else {
-                        statusDiv.innerText = "Фонарик не поддерживается на этом устройстве";
+                        statusDiv.innerText = "Фонарик не поддерживается устройством";
                     }
+                } else {
+                    statusDiv.innerText = "Фонарик недоступен (поток не активен)";
                 }
             } catch (err) {
                 console.error("Ошибка активации фонарика:", err);
             }
         });
 
+        // Передача всего массива в бота через sendData и корректное закрытие
         sendBtn.addEventListener('click', async () => {
             if (scannedBarcodes.length === 0) {
                 statusDiv.innerText = "❌ Список пуст. Отсканируйте товары!";
@@ -192,7 +217,6 @@
             }
             
             statusDiv.innerText = "Передача данных в чат...";
-            // Отправляем JSON с массивом barcodes
             tg.sendData(JSON.stringify({ barcodes: scannedBarcodes }));
             
             if (scanner) {
@@ -204,9 +228,9 @@
             }
         });
 
-        // Автоматический клик запуска камеры при открытии
+        // Автоматический старт при открытии WebApp
         document.addEventListener("DOMContentLoaded", () => {
-            setTimeout(() => { startBtn.click(); }, 150);
+            setTimeout(() => { startBtn.click(); }, 250);
         });
     </script>
 </body>
