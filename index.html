@@ -20,7 +20,7 @@
             overflow: hidden;
         }
         h2 { 
-            margin-top: 20px;
+            margin-top: 20px; 
             font-size: 20px;
             font-weight: 600;
         }
@@ -42,9 +42,6 @@
         }
         #reader video {
             object-fit: cover !important;
-        }
-        #reader__scan_region {
-            background: rgba(255, 255, 255, 0.02);
         }
         .panel { 
             padding: 20px;
@@ -243,48 +240,35 @@
                 verbose: false
             });
 
-            // Конфигурация сканирования: оптимальный FPS для экспозиции кадра
+            // КРИТИЧЕСКИЕ НАСТРОЙКИ ДЛЯ МЕЛКИХ КОДОВ:
             const config = { 
-                fps: 15, 
-                qrbox: { width: 310, height: 150 }, 
+                fps: 20, // Повысили до 20 fps для более частого анализа мелких деталей
+                // УМЕНЬШИЛИ РАЗМЕР ПРИЦЕЛА (было 310x150). 
+                // Теперь рамка узкая и заставляет держать мелкий код дальше, где у iPhone идеальный фокус.
+                qrbox: { width: 230, height: 100 }, 
                 experimentalFeatures: { useBarCodeDetectorIfSupported: true }
             };
 
-            // 1. ЗАПУСК КАМЕРЫ: Используем максимально простой и бесконфликтный режим.
-            // Это гарантирует, что iPhone мгновенно откроет видеопоток БЕЗ зависаний.
             scanner.start(
                 { facingMode: "environment" },
                 config,
                 (text) => { sendBarcodeAndClose(text); },
                 (err) => { }
             ).then(async () => {
-                statusDiv.innerText = "Поместите штрих-код в рамку прицела";
+                statusDiv.innerText = "Держите телефон чуть дальше от мелких кодов";
                 extraControls.style.display = 'flex';
                 setupTorchButton();
 
-                // 2. ДИНАМИЧЕСКИЙ ТЮНИНГ ОПТИКИ ПОД IPHONE (HD-поток + Зум + Автофокус)
-                // Камера уже запущена, теперь мы аккуратно применяем параметры к активному треку.
+                // Попытка мягко запустить непрерывный фокус на поддерживаемых iOS
                 try {
                     const track = scanner.getRunningTrack();
-                    if (track) {
-                        const constraints = {
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 },
-                            advanced: [
-                                { focusMode: "continuous" }, // Постоянный фокус
-                                { zoom: 1.5 }               // Зум 1.5х для исключения размытия вблизи
-                            ]
-                        };
-                        
-                        // Применяем настройки потока «на лету»
-                        if (typeof track.applyConstraints === 'function') {
-                            await track.applyConstraints(constraints);
-                            console.log("HD-разрешение и Zoom 1.5 успешно применены к треку iPhone!");
-                        }
+                    if (track && typeof track.applyConstraints === 'function') {
+                        await track.applyConstraints({
+                            advanced: [{ focusMode: "continuous" }]
+                        });
                     }
                 } catch (trackErr) {
-                    // Если конкретная старая модель iOS не поддерживает зум на лету, она просто пропустит этот шаг
-                    console.warn("Не удалось динамически настроить трек оптики:", trackErr);
+                    console.log("Динамический фокус не применился:", trackErr);
                 }
 
             }).catch(err => {
@@ -292,7 +276,6 @@
                 btn.style.display = 'inline-block';
                 extraControls.style.display = 'flex';
                 torchBtn.style.display = 'none';
-                console.error("Критическая ошибка старта:", err);
             });
         });
 
