@@ -100,10 +100,10 @@
         let lastScannedCode = "";
         let lastScannedTime = 0;
 
-        // Единый коллбек успешного сканирования товара
+        // Единая функция обработки успешного сканирования
         const onScanSuccess = (text) => {
             const now = Date.now();
-            // Защита от случайного повторного считывания одной и той же коробки за 1.5 секунды
+            // Защита от дребезга кадров (не сканируем одну коробку дважды за 1.5 секунды)
             if (text === lastScannedCode && (now - lastScannedTime) < 1500) {
                 return; 
             }
@@ -128,63 +128,47 @@
         startBtn.addEventListener('click', async () => {
             startBtn.style.display = 'none';
             controls.style.display = 'block';
-            statusDiv.innerText = "Инициализация оптики...";
+            statusDiv.innerText = "Запуск камеры...";
             
-            // Если остался старый экземпляр сканера, очищаем его
             if (scanner) {
                 try { await scanner.clear(); } catch (e) {}
             }
             
+            // Создаем экземпляр сканера
             scanner = new Html5Qrcode("reader");
             
+            // Конфигурация движка распознавания: вырезаем QR для скорости, оставляем товарные коды
             const config = { 
                 fps: 30, 
-                qrbox: { width: 320, height: 160 },
-                // Отключаем поиск QR-кодов, ищем только товарные линейные коды для экономии процессора
+                qrbox: { width: 280, height: 150 }, 
                 formatsToSupport: [ 
                     Html5QrcodeSupportedFormats.EAN_13,
                     Html5QrcodeSupportedFormats.EAN_8,
                     Html5QrcodeSupportedFormats.CODE_128 
-                ],
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                ]
             };
 
-            // Попытка 1: Запрос улучшенного адаптивного разрешения с автофокусом
-            const adaptiveCameraConfig = {
-                facingMode: "environment",
-                width: { min: 640, ideal: 1280, max: 1920 },
-                height: { min: 480, ideal: 720, max: 1080 },
-                focusMode: "continuous"
+            // Самый бесконфликтный режим запроса видеопотока (без жестких параметров разрешений)
+            const safeCameraConfig = { 
+                facingMode: "environment" 
             };
 
             scanner.start(
-                adaptiveCameraConfig,
+                safeCameraConfig,
                 config,
                 onScanSuccess,
-                (err) => { }
+                (err) => { /* фоновые промахи мимо штрихкода пропускаем */ }
             ).then(() => {
                 statusDiv.innerText = "Наводите прицел на штрихкод товара";
-            }).catch(e => {
-                console.error("Попытка с расширенными настройками не удалась. Запуск резервного режима...", e);
-                
-                // Попытка 2 (Фолбек): Если браузер Telegram отклонил сложные настройки, запускаем базовый режим
-                scanner.start(
-                    { facingMode: "environment" },
-                    config,
-                    onScanSuccess,
-                    (err) => {}
-                ).then(() => {
-                    statusDiv.innerText = "Наводите прицел (резервный режим)";
-                }).catch(err2 => {
-                    statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры в настройках Telegram.";
-                    startBtn.style.display = 'inline-block';
-                    controls.style.display = 'none';
-                    console.error("Критическая ошибка старта камеры:", err2);
-                });
+            }).catch(err => {
+                statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
+                startBtn.style.display = 'inline-block';
+                controls.style.display = 'none';
+                console.error("Критическая ошибка старта html5-qrcode:", err);
             });
         });
 
-        // Управление вспышкой (Фонариком) через свойства запущенного медиапотока
+        // Управление фонариком (вспышкой) через свойства трека запущенной камеры
         torchBtn.addEventListener('click', async () => {
             if (!scanner) return;
             try {
@@ -199,24 +183,25 @@
                         torchBtn.innerText = isTorchOn ? "Фонарик: ВКЛ ☀️" : "Фонарик: ВЫКЛ 🔦";
                         torchBtn.style.backgroundColor = isTorchOn ? "#34c759" : "#ff9500";
                     } else {
-                        statusDiv.innerText = "Фонарик не поддерживается устройством";
+                        statusDiv.innerText = "Фонарик не поддерживается на этом устройстве";
                     }
                 } else {
-                    statusDiv.innerText = "Фонарик недоступен (поток не активен)";
+                    statusDiv.innerText = "Фонарик недоступен (камера не активна)";
                 }
             } catch (err) {
+                statusDiv.innerText = "Вспышка заблокирована системой";
                 console.error("Ошибка активации фонарика:", err);
             }
         });
 
-        // Передача всего массива в бота через sendData и корректное закрытие
+        // Передача собранного массива в бот
         sendBtn.addEventListener('click', async () => {
             if (scannedBarcodes.length === 0) {
                 statusDiv.innerText = "❌ Список пуст. Отсканируйте товары!";
                 return;
             }
             
-            statusDiv.innerText = "Передача данных в чат...";
+            statusDiv.innerText = "Передача данных...";
             tg.sendData(JSON.stringify({ barcodes: scannedBarcodes }));
             
             if (scanner) {
@@ -228,9 +213,9 @@
             }
         });
 
-        // Автоматический старт при открытии WebApp
+        // Автозапуск камеры при загрузке WebApp, чтобы убрать лишний клик
         document.addEventListener("DOMContentLoaded", () => {
-            setTimeout(() => { startBtn.click(); }, 250);
+            setTimeout(() => { startBtn.click(); }, 200);
         });
     </script>
 </body>
