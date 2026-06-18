@@ -20,7 +20,7 @@
             overflow: hidden;
         }
         h2 { 
-            margin-top: 20px; 
+            margin-top: 20px;
             font-size: 20px;
             font-weight: 600;
         }
@@ -48,14 +48,14 @@
             background: rgba(255, 255, 255, 0.02);
         }
         .panel { 
-            padding: 20px; 
+            padding: 20px;
             background: #2c2c2e; 
             border-top-left-radius: 20px;
             border-top-right-radius: 20px;
             box-shadow: 0 -4px 15px rgba(0,0,0,0.3);
         }
         .btn {
-            background-color: #007aff; 
+            background-color: #007aff;
             color: white; 
             border: none;
             border-radius: 12px; 
@@ -72,7 +72,7 @@
             background-color: #0056b3;
         }
         .status {
-            margin-bottom: 12px; 
+            margin-bottom: 12px;
             color: #9a9a9f; 
             font-size: 15px;
         }
@@ -151,7 +151,7 @@
 
     <script>
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Разворачиваем WebApp на весь экран телефона
+        tg.expand(); // Разворачиваем WebApp на весь экран телефона [cite: 58]
 
         const btn = document.getElementById('action-btn');
         const statusDiv = document.getElementById('status');
@@ -165,14 +165,12 @@
         let scanner = null;
         let torchFeature = null;
         let torchOn = false;
-        let closing = false; // защита от повторной отправки/закрытия
+        let closing = false; // защита от повторной отправки/закрытия [cite: 61]
 
-        // Единая функция: отправляем штрихкод боту и аккуратно закрываем WebApp.
-        // Используется и для камеры, и для ручного ввода, чтобы поведение не расходилось.
+        // Единая функция: отправляем штрихкод боту и аккуратно закрываем WebApp [cite: 62]
         function sendBarcodeAndClose(text) {
             if (closing) return;
             closing = true;
-
             if (tg.HapticFeedback) {
                 tg.HapticFeedback.notificationOccurred('success');
             }
@@ -186,9 +184,7 @@
             }
         }
 
-        // Переключение фонарика. Доступно только если поддерживается устройством/браузером
-        // (на Android почти всегда работает, на iPhone веб-страницы пока не могут управлять вспышкой —
-        // это ограничение iOS, не библиотеки).
+        // Переключение фонарика [cite: 68]
         async function setupTorchButton() {
             try {
                 const capabilities = scanner.getRunningTrackCameraCapabilities();
@@ -235,9 +231,8 @@
 
         btn.addEventListener('click', async () => {
             btn.style.display = 'none';
-            statusDiv.innerText = "Запуск камеры...";
+            statusDiv.innerText = "Запуск HD-камеры...";
             
-            // Если остался старый экземпляр сканера, очищаем его во избежание конфликтов потока
             if (scanner) {
                 try {
                     await scanner.clear();
@@ -245,10 +240,7 @@
                     console.log("Предыдущий сканер уже был очищен");
                 }
             }
-            
-            // Инициализируем сканер в блоке <div id="reader">.
-            // formatsToSupport ограничивает декодер только реальными форматами товарных
-            // штрихкодов — меньше работы на кадр, быстрее и надёжнее на слабых телефонах.
+         
             scanner = new Html5Qrcode("reader", {
                 formatsToSupport: [
                     Html5QrcodeSupportedFormats.EAN_13,
@@ -263,45 +255,59 @@
                 ],
                 verbose: false
             });
-            
-            // Конфигурация для захвата линейных штрихкодов товаров (EAN-13, и т.д.)
+
+            // Настройки движка распознавания
             const config = { 
-                fps: 12, // Снижено с 25: при высоком fps камера укорачивает выдержку, картинка темнее.
-                          // 12 кадров/сек достаточно для статичного сканирования и оставляет камере
-                          // больше времени на экспозицию в слабом свете.
-                qrbox: { width: 320, height: 160 }, // Прямоугольная рамка прицела под формат товарных штрихкодов
-                experimentalFeatures: { useBarCodeDetectorIfSupported: true }, // Аппаратное ускорение на поддерживаемых смартфонах
-                videoConstraints: {
-                    facingMode: "environment",
-                    advanced: [{ focusMode: "continuous" }] // Просим непрерывную автофокусировку, где это поддерживается
-                }
+                fps: 15, // Оптимальный FPS: дает камере iPhone больше времени на экспозицию кадра при тусклом свете
+                qrbox: { width: 320, height: 160 }, 
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+            };
+
+            // Передача оптимизированных параметров потока под iOS (HD-разрешение + зум + автофокус)
+            const iosOptimizedConstraints = {
+                facingMode: "environment",
+                width: { min: 1280, ideal: 1280 }, // Принудительный HD-поток по ширине
+                height: { min: 720, ideal: 720 },  // Принудительный HD-поток по высоте
+                advanced: [
+                    { focusMode: "continuous" },   // Непрерывная автофокусировка
+                    { zoom: 1.5 }                  // Принудительный зум 1.5х для исключения размытия макросъемки
+                ]
             };
 
             scanner.start(
-                { facingMode: "environment" }, // Принудительно задействуем заднюю камеру
+                iosOptimizedConstraints, // Запускаем с HD и зумом в качестве первого параметра
                 config,
                 (text) => {
-                    // Коллбек: штрихкод успешно распознан!
                     sendBarcodeAndClose(text);
                 },
-                (err) => {
-                    // Игнорируем фоновые ошибки фокуса и пустые кадры, чтобы не засорять логи
-                }
+                (err) => { }
             ).then(() => {
                 statusDiv.innerText = "Поместите штрих-код в рамку прицела";
                 extraControls.style.display = 'flex';
                 setupTorchButton();
             }).catch(e => {
-                statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
-                btn.style.display = 'inline-block';
-                extraControls.style.display = 'flex';
-                torchBtn.style.display = 'none';
-                console.error("Ошибка старта html5-qrcode:", e);
+                console.warn("Продвинутый HD-режим отклонен. Запуск базового потока...", e);
+                
+                // Резервный запуск на случай, если устройство совсем не поддерживает кастомные констреинты
+                scanner.start(
+                    { facingMode: "environment" },
+                    config,
+                    (text) => { sendBarcodeAndClose(text); },
+                    (err) => { }
+                ).then(() => {
+                    statusDiv.innerText = "Поместите штрих-код в рамку прицела (базовый режим)";
+                    extraControls.style.display = 'flex';
+                    setupTorchButton();
+                }).catch(err2 => {
+                    statusDiv.innerText = "Ошибка доступа. Проверьте разрешения камеры.";
+                    btn.style.display = 'inline-block';
+                    extraControls.style.display = 'flex';
+                    torchBtn.style.display = 'none';
+                    console.error("Критическая ошибка старта html5-qrcode:", err2);
+                });
             });
         });
 
-        // Автоматический клик по кнопке при открытии страницы, 
-        // чтобы сотруднику на ТСД не нужно было делать лишнее нажатие на экран
         document.addEventListener("DOMContentLoaded", () => {
             setTimeout(() => {
                 btn.click();
